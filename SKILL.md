@@ -1,15 +1,17 @@
 ---
 name: ios-swift-modern
-description: Modern iOS/Swift development standards and patterns for new and existing projects. Use this skill whenever the user asks to create, scaffold, refactor, or review an iOS app, Swift package, SwiftUI view, Xcode project, or any Apple platform code (macOS, watchOS, visionOS, tvOS). Also trigger when the user mentions Swift, SwiftUI, UIKit, Xcode, @Observable, async/await in a Swift context, MVVM for iOS, Core Data, SwiftData, Liquid Glass, or any Apple framework. Use this even for quick one-file Swift tasks to ensure modern conventions are followed. If the user says "make me an app" or "build an iOS app" or "new Xcode project" — use this skill.
+description: Modern iOS/Swift standards for refactoring, reviewing, and maintaining existing projects. ALWAYS use this skill when the user asks to refactor, clean up, review, fix, update, or modernize an existing iOS app, Swift codebase, or Xcode project. Trigger on ANY of these — "refactor", "clean up", "modernize", "migrate", "update to iOS 26", "fix this code", "review my code", "convert to @Observable", "migrate to SwiftData", "remove ObservableObject", "update to async/await", or any request to improve existing Swift/SwiftUI code. Also trigger on quick one-file Swift tasks, code review requests, or when the user pastes Swift code and asks questions about it. This skill knows critical iOS 26 conventions including default MainActor isolation (SE-0466), @Observable migration pitfalls (private(set) widening, memberwise init breakage, NSObject delegate extraction), and battle-tested patterns learned from real refactors. Without this skill, refactoring advice will use outdated patterns and miss known migration landmines. For building NEW apps from scratch, prefer ios26-new-project instead.
 ---
 
-# Modern iOS/Swift Development Skill
+# Modern iOS/Swift Development Skill (Refactoring & Maintenance)
 
 This skill ensures all iOS and Apple platform code follows current best practices as of **Swift 6.3, iOS 26 (Liquid Glass), Xcode 26.4, and macOS Tahoe 26**. Apple moved to year-based versioning in 2025 — iOS went from 18 directly to 26, and all platforms now share the same version number.
 
 **Current versions (March 2026):** iOS 26.4, Xcode 26.4, Swift 6.3, macOS Tahoe 26.4
 
 **App Store requirement:** Starting April 2026, all submissions must be built with the iOS 26 SDK.
+
+This skill is optimized for **refactoring existing projects** and **reviewing/maintaining Swift code**. For building new apps from scratch, use the `ios26-new-project` skill instead.
 
 Read the appropriate reference files in `references/` based on what the task requires. Don't read all of them upfront — only pull in what's relevant.
 
@@ -22,6 +24,24 @@ Before writing any code, determine:
 3. **Architecture** — MVVM is the default. Don't introduce TCA, VIPER, or other patterns unless the user specifically requests them.
 4. **Concurrency model** — Swift Concurrency (async/await, actors) is the default. No GCD in new code. Swift 6.2+ adds the `@concurrent` attribute for more granular concurrency control.
 5. **Design language** — iOS 26 introduces Liquid Glass. Apps rebuilt with Xcode 26 SDK automatically get Liquid Glass on standard controls. Custom adoption uses `.glassEffect()` and `GlassEffectContainer`.
+6. **Default Actor Isolation** — New Xcode 26 projects default to `@MainActor` isolation (SE-0466). If refactoring toward this, enable the build setting and add `nonisolated` / `@concurrent` where needed. Existing projects default to `nonisolated` and require manual `@MainActor`.
+
+## Default MainActor Isolation (iOS 26 / Swift 6.2+)
+
+Xcode 26 new projects default ALL code to `@MainActor`. This is a build setting ("Default Actor Isolation") controlled by SE-0466. When refactoring an existing project toward iOS 26:
+
+**If enabling default MainActor isolation on an existing project:**
+- Remove manual `@MainActor` from ViewModels — it's now redundant
+- Add `nonisolated` to data models, `Codable` structs, and types that cross isolation boundaries
+- Add `nonisolated` to ALL SwiftData `@Model` classes (critical — without it they get MainActor isolation and break in background contexts)
+- Add `@concurrent` to async functions that should run off the main thread
+- SPM packages/libraries should keep `nonisolated` default — they need to be usable from any isolation domain
+- `actor` types are unaffected — they have their own isolation domain
+
+**If keeping the existing nonisolated default:**
+- Continue using explicit `@MainActor` on ViewModels
+- No changes needed to data models
+- This is the safer path for incremental migration
 
 ## Project Structure
 
@@ -59,16 +79,9 @@ However, for **new code**, prefer `os.Logger` even for debug-level output (see t
 A `case`-less `enum` used to hold `static let` constants is the Swift-idiomatic namespace pattern. Unlike a `struct`, it can't be accidentally instantiated. Don't convert these to structs, don't add cases, and don't add `private init()` — the absence of cases already prevents instantiation.
 
 ```swift
-// This is correct — leave it alone
 enum API {
     static let baseURL = URL(string: "https://api.example.com")!
     static let timeout: TimeInterval = 30
-}
-
-enum AnimationDuration {
-    static let short: CGFloat = 0.15
-    static let medium: CGFloat = 0.3
-    static let long: CGFloat = 0.5
 }
 ```
 
@@ -92,203 +105,78 @@ No force unwraps except clear invariants (`@IBOutlet`). Use `guard let` for earl
 ### Error Handling
 Use typed errors with custom `Error` enums. Never silently swallow errors with `try?` unless you explicitly log the failure.
 
-```swift
-enum NetworkError: Error, LocalizedError {
-    case invalidResponse(statusCode: Int)
-    case decodingFailed(underlying: Error)
-    case unauthorized
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidResponse(let code): "Server returned status \(code)"
-        case .decodingFailed: "Failed to parse response"
-        case .unauthorized: "Authentication required"
-        }
-    }
-}
-```
-
 ### Enums Over Strings
 No stringly-typed keys, notification names, user defaults keys, or identifiers.
-
-```swift
-enum UserDefaultsKey: String {
-    case hasCompletedOnboarding
-    case preferredTheme
-}
-```
 
 ### Value Types
 Prefer `struct` over `class` unless reference semantics are explicitly needed (ViewModels are the main exception with `@Observable`).
 
 ### Logging
 
-**`os.Logger` is the default for all new code** — both production and debug logging. It's superior to `#if DEBUG print()` in every way:
+**`os.Logger` is the default for all new code** — both production and debug logging:
 
-1. **Privacy by default** — Logger auto-redacts dynamic content in release builds. You explicitly opt-in with `privacy: .public` for non-sensitive data. No risk of leaking user data.
-2. **Always available** — Unlike `#if DEBUG print()`, Logger messages are always captured but only visible with a debugger or Console.app attached. This means you can diagnose production issues on user devices without needing a debug build.
-3. **Structured categories** — Subsystem + category lets you filter logs in Console.app by specific area (e.g., show only network logs, or only storage logs), which is invaluable for debugging specific subsystems.
-4. **Log levels** — `.debug`, `.info`, `.error`, `.fault` let the system manage retention and visibility. Debug-level messages have minimal performance impact and are only persisted when logging is actively observed.
+1. **Privacy by default** — Logger auto-redacts dynamic content in release builds.
+2. **Always available** — captured even without `#if DEBUG`, visible in Console.app.
+3. **Structured categories** — filter by subsystem + category.
+4. **Log levels** — `.debug`, `.info`, `.error`, `.fault`.
 
 ```swift
 import os
 
-// Define categories as static Logger instances for structured filtering
 extension Logger {
     private static let subsystem = Bundle.main.bundleIdentifier!
-
     static let network = Logger(subsystem: subsystem, category: "Network")
     static let auth = Logger(subsystem: subsystem, category: "Auth")
     static let storage = Logger(subsystem: subsystem, category: "Storage")
-    static let cloudKit = Logger(subsystem: subsystem, category: "CloudKit")
-    static let memory = Logger(subsystem: subsystem, category: "Memory")
 }
 
-// Usage — note privacy controls on dynamic content
 Logger.network.debug("Request started: \(endpoint, privacy: .public)")
-Logger.network.info("Response: \(statusCode, privacy: .public) in \(duration)s")
 Logger.network.error("Failed: \(error.localizedDescription, privacy: .public)")
-
-// Sensitive data is auto-redacted by default — no privacy annotation needed
-Logger.auth.info("Token refreshed for user \(userId)")  // userId is redacted in release
 ```
-
-**When `#if DEBUG print()` is still acceptable:**
-- Throwaway debug output you intend to remove before committing
-- Extremely verbose dump output (full JSON payloads, etc.) that would pollute structured logs
-
-**Never use bare `print()` without `#if DEBUG`** — it writes to stderr in release, degrades performance, and can leak information.
 
 ## Observation — @Observable vs ObservableObject
 
-→ **Read `references/observable-migration.md` for full migration guide and side-by-side comparisons.**
+→ **Read `references/observable-migration.md` for full migration guide, pitfalls, and side-by-side comparisons.**
 
 The rule: iOS 17+ → `@Observable`. Below iOS 17 → `ObservableObject`.
 
-Quick summary for new iOS 17+/26 code:
-
-```swift
-import Observation
-
-@Observable
-@MainActor
-final class ProfileViewModel {
-    var user: User?
-    var isLoading = false
-    var errorMessage: String?
-
-    @ObservationIgnored
-    private var internalCache: [String: Any] = [:]
-}
-
-// In views — no special property wrappers needed in most cases:
-struct ProfileView: View {
-    @State var viewModel = ProfileViewModel()        // view owns lifecycle
-    // OR
-    var viewModel: ProfileViewModel                  // passed in from parent
-    // OR
-    @Environment(ProfileViewModel.self) var viewModel // from environment
-}
-```
+The migration guide covers 9 known pitfalls including: `@Published` hiding `private(set)` intent, `private` breaking memberwise inits, singleton access patterns, NSObject delegate extraction, observation notification coalescing, and more.
 
 ## Swift Concurrency
 
-→ **Read `references/swift-concurrency.md` for async/await patterns, actors, Sendable, and migration from GCD/Combine.**
+→ **Read `references/swift-concurrency.md` for async/await patterns, actors, Sendable, NotificationCenter async sequences, and migration from GCD/Combine.**
 
 Key rules:
 - `async/await` over completion handlers — always
-- `@MainActor` on ViewModels and anything touching UI state
+- `@MainActor` on ViewModels and anything touching UI state (unless using default MainActor isolation)
 - `actor` for shared mutable state needing thread safety
 - `Task {}` to bridge sync → async (`.task` modifier, button actions)
 - `AsyncStream` / `AsyncSequence` to replace Combine publishers where practical
+- `NotificationCenter.default.notifications(named:)` for system notifications (auto-cleanup on Task cancellation)
 - Enable strict concurrency checking in build settings
 - Swift 6.2+ introduces `@concurrent` for marking functions that should run concurrently off the caller's actor
 
-```swift
-@Observable
-@MainActor
-final class OrderViewModel {
-    var orders: [Order] = []
-    var isLoading = false
-
-    private let service: OrderService
-
-    init(service: OrderService = .init()) {
-        self.service = service
-    }
-
-    func loadOrders() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            orders = try await service.fetchOrders()
-        } catch {
-            // handle error
-        }
-    }
-}
-```
-
 ## SwiftUI Patterns
 
-→ **Read `references/swiftui-patterns.md` for navigation, state management, Liquid Glass, modifiers, and common patterns.**
+→ **Read `references/swiftui-patterns.md` for navigation, state management, Liquid Glass, type-checker fixes, AnyView, modifiers, and common patterns.**
 
 Key conventions:
 - `NavigationStack` (never the deprecated `NavigationView`)
 - `.navigationDestination(for:)` for type-safe navigation
-- `.task` modifier for async work on appear (replaces `.onAppear` + `Task {}`)
-- `@Environment(\.dismiss)` to dismiss views
-- Keep view bodies under ~40 lines — extract subviews aggressively (this is a compiler requirement, not just style)
-- `ViewModifier` for reusable styling
-- Prefer `.sensoryFeedback()` (iOS 17+) over UIKit haptics
-- **iOS 26:** Liquid Glass automatically applies to standard controls when built with Xcode 26 SDK. Use `.glassEffect()` for custom Liquid Glass surfaces.
+- `.task` modifier for async work on appear
+- Keep view bodies under ~40 lines — this is a compiler constraint (type-checker timeout), not just style
+- Never use `AnyView` — it destroys SwiftUI's diffing via `_ConditionalContent`
+- **iOS 26:** Liquid Glass automatically applies when built with Xcode 26 SDK
 
 ## Data Persistence
 
 iOS 17+ new projects → **SwiftData**. Existing Core Data projects → keep Core Data unless asked to migrate.
 
-```swift
-@Model
-final class Expense {
-    var title: String
-    var amount: Double
-    var date: Date
-    var category: Category?
-
-    init(title: String, amount: Double, date: Date = .now) {
-        self.title = title
-        self.amount = amount
-        self.date = date
-    }
-}
-```
-
-Simple key-value → `@AppStorage` or a typed `UserDefaults` wrapper with enum keys.
+**If using default MainActor isolation:** add `nonisolated` to all `@Model` classes.
 
 ## Networking
 
 `URLSession` with async/await. No third-party HTTP libraries unless requested.
-
-```swift
-actor NetworkService {
-    private let session: URLSession
-    private let decoder: JSONDecoder
-
-    init(session: URLSession = .shared, decoder: JSONDecoder = .init()) {
-        self.session = session
-        self.decoder = decoder
-    }
-
-    func fetch<T: Decodable>(_ type: T.Type, from endpoint: Endpoint) async throws -> T {
-        let (data, response) = try await session.data(for: endpoint.request)
-        guard let http = response as? HTTPURLResponse,
-              (200...299).contains(http.statusCode) else {
-            throw NetworkError.invalidResponse(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
-        }
-        return try decoder.decode(T.self, from: data)
-    }
-}
-```
 
 ## Things To Never Use in New Code
 

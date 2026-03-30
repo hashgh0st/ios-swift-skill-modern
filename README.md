@@ -1,21 +1,21 @@
 # ios-swift-modern
 
-A Claude Code skill that enforces modern iOS/Swift best practices across all your projects — including migration gotchas learned from real refactors.
+A Claude Code skill for refactoring, reviewing, and maintaining existing iOS/Swift projects with current best practices and battle-tested migration patterns.
 
 ## What It Does
 
-When Claude Code detects an iOS/Swift task, this skill automatically loads conventions for **Swift 6.3, iOS 26 (Liquid Glass), Xcode 26.4, and macOS Tahoe 26** — so every file it writes or refactors follows current standards out of the box.
+When you ask Claude Code to refactor, review, or modernize an existing iOS codebase, this skill loads conventions for **Swift 6.3, iOS 26, Xcode 26.4** — plus migration pitfalls learned from real refactors that Claude doesn't know by default.
+
+**For building new apps from scratch, use [`ios26-new-project`](../ios26-new-project/) instead.**
 
 **Standards & Architecture:**
-- **Liquid Glass** design language — `.glassEffect()`, `GlassEffectContainer`, layered icons, when to apply and when not to
-- **@Observable** over `ObservableObject` (with full migration guide and known pitfalls)
+- **@Observable** over `ObservableObject` (with full migration guide and 9 known pitfalls)
 - **async/await** over GCD and completion handlers (with Combine migration tables)
 - **SwiftData** over Core Data for new projects
 - **NavigationStack**, `.task`, `@Environment`, `@Bindable`
-- New iOS 26 SwiftUI APIs: native `WebView`, rich text `TextEditor`, `@Animatable` macro
-- **MVVM** architecture with clean separation
-- **Access control**, error handling, naming conventions
 - **os.Logger** for production logging, `#if DEBUG`-gated `print()` for dev
+- **Default MainActor isolation** (SE-0466) — guidance for enabling on existing projects
+- **Liquid Glass** — automatic on standard controls, `.glassEffect()` for custom
 
 **Migration Gotchas (learned the hard way):**
 - `@Published` removal silently widening `private(set)` write access
@@ -23,6 +23,9 @@ When Claude Code detects an iOS/Swift task, this skill automatically loads conve
 - Singleton `@ObservedObject` → plain `var` and when you need `@Bindable` for bindings
 - Observation notification coalescing — avoiding multiple re-renders from sequential `await` assignments
 - SwiftUI type-checker timeouts from large view bodies with chained modifiers
+- NSObject subclasses can't use `@Observable` — use delegate extraction pattern
+- NotificationCenter async sequences replacing Combine `.publisher(for:)`
+- AnyView destroying SwiftUI's `_ConditionalContent` diffing
 
 **Patterns It Knows to Leave Alone:**
 - `#if DEBUG`-gated `print()` statements
@@ -35,16 +38,14 @@ When Claude Code detects an iOS/Swift task, this skill automatically loads conve
 
 ## Install
 
-Copy the `ios-swift-modern/` folder into your Claude Code skills directory:
-
 ```bash
-cp -r ios-swift-modern/ ~/.claude/skills/ios-swift-modern
-```
+# Project-level (one project)
+mkdir -p /path/to/your/project/.claude/skills
+ln -s /Users/dak/Projects/ios-swift-modern /path/to/your/project/.claude/skills/ios-swift-modern
 
-Or symlink it:
-
-```bash
-ln -s /path/to/ios-swift-modern ~/.claude/skills/ios-swift-modern
+# User-level (all projects)
+mkdir -p ~/.claude/skills
+ln -s /Users/dak/Projects/ios-swift-modern ~/.claude/skills/ios-swift-modern
 ```
 
 ## Structure
@@ -53,16 +54,14 @@ ln -s /path/to/ios-swift-modern ~/.claude/skills/ios-swift-modern
 ios-swift-modern/
 ├── SKILL.md                           # Core standards, decision guide, patterns to preserve
 └── references/
-    ├── observable-migration.md        # ObservableObject → @Observable (with pitfall guide)
-    ├── swift-concurrency.md           # async/await, actors, Sendable, GCD/Combine migration
-    └── swiftui-patterns.md            # Liquid Glass, navigation, state, view composition, type-checker fixes
+    ├── observable-migration.md        # ObservableObject → @Observable (9 pitfalls)
+    ├── swift-concurrency.md           # async/await, actors, Sendable, NotificationCenter async
+    └── swiftui-patterns.md            # Liquid Glass, navigation, state, type-checker fixes
 ```
 
-The skill uses progressive disclosure — Claude reads `SKILL.md` first, then pulls in only the reference file relevant to the task.
+Progressive disclosure — Claude reads `SKILL.md` first, then pulls in only the reference file relevant to the task.
 
 ## Usage
-
-Just work normally. The skill triggers on any Swift/iOS/SwiftUI/Xcode task. For refactors, say:
 
 ```
 refactor this project
