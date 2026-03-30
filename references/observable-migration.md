@@ -116,7 +116,8 @@ private var cache: [String: Data] = [:]
 | `@ObservedObject var vm: VM` | `var vm: VM` | Object passed in from parent |
 | `@EnvironmentObject var vm: VM` | `@Environment(VM.self) var vm` | Object injected via environment |
 
-### Step 5: Migrate singleton access patterns
+### Step 5: Migrate singleton and `private` property patterns
+
 Singletons accessed via `@ObservedObject` simplify significantly:
 
 ```swift
@@ -129,12 +130,44 @@ var settings = SettingsStore.shared
 var voiceStore = VoicePersonaStore.shared
 ```
 
-Note: if the view needs `$` bindings to the singleton's properties, use `@Bindable`:
+If the view needs `$` bindings to the singleton's properties, use `@Bindable`:
 ```swift
 @Bindable var settings = SettingsStore.shared
 ```
 
-Also watch out for `private` on these properties — with `@ObservedObject`, the wrapper handled initialization internally. With a plain `var`, marking it `private` can interfere with the view's memberwise init if the view is a struct. Remove `private` unless you have an explicit `init`.
+**The `private` and memberwise init trap:** In Swift, marking ANY stored property `private` on a struct makes the compiler-generated memberwise init `private`. With `@ObservedObject`, the property wrapper handled initialization internally so this wasn't visible. After migration, `private` on a plain `var` directly affects the struct's init visibility.
+
+The rule depends on whether the struct has properties WITHOUT default values:
+
+```swift
+// SAFE — all properties have defaults, so the no-arg init MyView() works
+// even though private makes the memberwise init private
+struct SettingsView: View {
+    private var store = SettingsStore.shared     // has default → no-arg init works
+    private var authManager = AuthManager.shared // has default → fine
+
+    var body: some View { ... }
+}
+
+// BROKEN — @Binding has no default, so the memberwise init is required
+// but private on another property made it private
+struct SubscriptionView: View {
+    @Binding var settings: AppSettings          // no default → needs memberwise init
+    private var store = SubscriptionStore.shared // ← this makes memberwise init private!
+
+    var body: some View { ... }
+}
+
+// FIX — remove private, or write an explicit init
+struct SubscriptionView: View {
+    @Binding var settings: AppSettings
+    var store = SubscriptionStore.shared         // removed private → memberwise init is internal
+
+    var body: some View { ... }
+}
+```
+
+**Before adding or keeping `private` on a migrated property in a View struct, check:** does this struct have ANY properties without default values (`@Binding`, `let` params, non-optional properties without `=`)? If yes, don't use `private` on stored properties unless you write an explicit `init`. If all properties have defaults, `private` is safe because the no-arg init still works.
 
 ### Step 6: Update environment injection sites
 ```swift
@@ -231,6 +264,8 @@ This matters most at startup or when refreshing multiple data sources. The patte
 6. **Silently widening write access** — removing `@Published` without adding `private(set)` where the original intent was internal-only writes. Always check who was setting each property before removing `@Published`.
 
 7. **Multiple async assignments causing multiple re-renders** — setting observed properties across separate `await` points triggers a notification per assignment. Coalesce by fetching in parallel and assigning synchronously in one pass.
+
+8. **`private` on a stored property breaking memberwise init** — in a View struct, marking a migrated property `private` makes the memberwise init private. If the struct has any properties without defaults (like `@Binding`), the struct becomes unconstructable from outside. Check for non-defaulted properties before using `private`.
 
 ## Performance Benefits
 
