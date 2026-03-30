@@ -218,6 +218,67 @@ struct EditProfileView: View {
 }
 ```
 
+## NSObject Subclasses and @Observable
+
+`@Observable` **cannot be applied to NSObject subclasses.** The macro needs to synthesize stored properties for observation tracking, which conflicts with Objective-C's runtime. If you try, you'll get compiler errors.
+
+This comes up when migrating classes that act as delegates for UIKit/AppKit/CoreBluetooth/etc. frameworks — those delegates must inherit from NSObject.
+
+### The Delegate Extraction Pattern
+
+The solution is to separate the `@Observable` state from the NSObject delegate:
+
+```swift
+// The public @Observable class — clean API, no NSObject
+@Observable
+@MainActor
+final class SpeechManager {
+    var isListening = false
+    var transcript = ""
+    var error: Error?
+
+    private var delegate: SpeechDelegate?
+
+    func startListening() {
+        let delegate = SpeechDelegate(owner: self)
+        self.delegate = delegate
+        // configure and start the speech recognizer with this delegate...
+        isListening = true
+    }
+
+    func stopListening() {
+        isListening = false
+        delegate = nil
+    }
+}
+
+// Private NSObject subclass — handles Obj-C delegate callbacks only
+private class SpeechDelegate: NSObject, SFSpeechRecognizerDelegate {
+    weak var owner: SpeechManager?
+
+    init(owner: SpeechManager) {
+        self.owner = owner
+        super.init()
+    }
+
+    func speechRecognizer(_ speechRecognizer: SFSpeechRecognizer, availabilityDidChange available: Bool) {
+        Task { @MainActor in
+            if !available {
+                owner?.error = SpeechError.unavailable
+            }
+        }
+    }
+}
+```
+
+The key points:
+- The `@Observable` class owns the state and the public API
+- The NSObject delegate subclass is private, handles only Obj-C callbacks, and forwards results back to the owner via a `weak` reference
+- Use `Task { @MainActor in }` in delegate callbacks to safely update the `@Observable` owner's state
+- The delegate doesn't hold any observed state itself — it's just a bridge
+
+This pattern applies to any framework that requires NSObject-based delegates: `CLLocationManager`, `CBCentralManager`, `AVCaptureSession`, `WCSession`, `SFSpeechRecognizer`, etc.
+
 ## Performance: Coalescing Observation Notifications
 
 With `@Observable`, each property mutation triggers a separate observation notification. If you set multiple properties across separate `await` boundaries, each one causes a view re-render:
@@ -266,6 +327,8 @@ This matters most at startup or when refreshing multiple data sources. The patte
 7. **Multiple async assignments causing multiple re-renders** — setting observed properties across separate `await` points triggers a notification per assignment. Coalesce by fetching in parallel and assigning synchronously in one pass.
 
 8. **`private` on a stored property breaking memberwise init** — in a View struct, marking a migrated property `private` makes the memberwise init private. If the struct has any properties without defaults (like `@Binding`), the struct becomes unconstructable from outside. Check for non-defaulted properties before using `private`.
+
+9. **Trying to apply `@Observable` to an NSObject subclass** — the macro can't synthesize its backing storage on NSObject because of Obj-C runtime conflicts. Use the delegate extraction pattern: keep the `@Observable` class pure Swift, and use a private NSObject subclass for Obj-C delegate callbacks that forwards to the owner via weak reference.
 
 ## Performance Benefits
 

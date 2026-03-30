@@ -177,6 +177,53 @@ for await location in locationUpdates() {
 }
 ```
 
+## NotificationCenter Async Sequences
+
+`NotificationCenter.default.notifications(named:)` returns an `AsyncSequence` — use it instead of Combine's `.publisher(for:)` or the old `addObserver` pattern. The async version automatically cleans up when the `Task` is cancelled, so there's no need for `AnyCancellable` storage or manual `removeObserver` calls.
+
+```swift
+// Old — Combine
+private var cancellables = Set<AnyCancellable>()
+
+func observeKeyboard() {
+    NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] notification in
+            self?.handleKeyboard(notification)
+        }
+        .store(in: &cancellables)
+}
+
+// New — async sequence
+func observeKeyboard() async {
+    for await notification in NotificationCenter.default.notifications(named: UIResponder.keyboardWillShowNotification) {
+        handleKeyboard(notification)
+    }
+    // cleanup is automatic when the Task is cancelled
+}
+```
+
+On a `@MainActor` type, the `for await` loop already runs on the main actor — no extra `Task { @MainActor in }` hop needed. Just call it from a `.task` modifier or a `Task` block inside an `@MainActor` context:
+
+```swift
+@Observable
+@MainActor
+final class ChatViewModel {
+    var keyboardHeight: CGFloat = 0
+
+    func startObserving() async {
+        for await notification in NotificationCenter.default.notifications(named: UIResponder.keyboardWillShowNotification) {
+            // Already on @MainActor — safe to update UI state directly
+            if let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+                keyboardHeight = frame.height
+            }
+        }
+    }
+}
+```
+
+This is the preferred pattern for NotificationCenter in new code. Reserve Combine's `.publisher(for:)` only for complex pipelines that need operators like `.debounce`, `.combineLatest`, etc.
+
 ## Sendable
 
 `Sendable` marks types as safe to pass across concurrency boundaries. The compiler enforces this with strict concurrency checking.
@@ -222,6 +269,7 @@ Enable strict concurrency checking in Xcode build settings (`SWIFT_STRICT_CONCUR
 | `PassthroughSubject` | `AsyncStream` with stored `continuation` |
 | `@Published` + `$property` sink | `@Observable` property (SwiftUI) or `withObservationTracking` |
 | `Future` | `async` function |
+| `NotificationCenter.publisher(for:)` | `NotificationCenter.default.notifications(named:)` async sequence |
 
 Combine is still fine for complex reactive pipelines or when targeting below iOS 17. But for new code, Swift Concurrency should be the default for async operations and `@Observable` for state observation.
 
@@ -236,3 +284,5 @@ Combine is still fine for complex reactive pipelines or when targeting below iOS
 4. **Not handling cancellation** — check `Task.isCancelled` or use `try Task.checkCancellation()` in long-running loops.
 
 5. **Blocking an actor** — never do synchronous heavy work inside an actor. Offload CPU-intensive work to a detached task or nonisolated method.
+
+6. **Storing `AnyCancellable` for NotificationCenter when async sequences work** — `NotificationCenter.default.notifications(named:)` auto-cleans on Task cancellation. No cancellable storage needed. Prefer it over Combine's `.publisher(for:)` unless you need reactive operators.

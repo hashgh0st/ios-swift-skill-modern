@@ -1,4 +1,93 @@
-# SwiftUI Patterns & Best Practices
+# SwiftUI Patterns & Best Practices (iOS 26 / Xcode 26.4 / Swift 6.3)
+
+## Liquid Glass (iOS 26+)
+
+iOS 26 introduces Liquid Glass — the biggest design overhaul since iOS 7. It's a dynamic translucent material that refracts content below it, reflects light around it, and has a lensing effect along edges. It applies across iOS, iPadOS, macOS Tahoe, watchOS, tvOS, and visionOS.
+
+### Automatic Adoption
+Simply rebuilding with the Xcode 26 SDK gives you Liquid Glass on standard controls automatically — toolbars, tab bars, navigation bars, sheets, segmented pickers, toggles, and sliders all update without code changes.
+
+### Custom Liquid Glass Surfaces
+For custom views, use `.glassEffect()`:
+
+```swift
+Button("Action") { doSomething() }
+    .glassEffect()                          // basic glass
+
+Button("Tinted") { doSomething() }
+    .glassEffect(.regular.tint(.purple))    // with color tint
+
+Button("Interactive") { doSomething() }
+    .glassEffect(.regular.interactive())    // scales and bounces on touch
+```
+
+### GlassEffectContainer — Morphing and Grouping
+Wrap glass elements in `GlassEffectContainer` to blend overlapping shapes and enable morphing transitions:
+
+```swift
+GlassEffectContainer {
+    HStack(spacing: 20) {
+        Button("Home") { }
+            .glassEffect()
+        Button("Search") { }
+            .glassEffect()
+        Button("Profile") { }
+            .glassEffect()
+    }
+}
+```
+
+Use `.glassEffectID(_:in:)` with a `@Namespace` for morphing animations between states.
+
+### Liquid Glass Design Principles
+- Glass belongs on the **navigation layer** — controls and chrome that float above content. Don't apply glass to content itself.
+- Partial-height sheets are inset by default with a glass background in iOS 26. If you previously used `.presentationBackground()` to customize sheets, consider removing it to let the new material work.
+- Toolbar items now float on a glass surface and are automatically grouped. Use `ToolbarSpacer` with fixed spacing to visually separate related action groups.
+- Tab bars shrink on scroll and expand when scrolling back up.
+- If you used custom `.presentationBackground()` on sheets, consider removing it to let the new Liquid Glass material shine.
+
+### Layered App Icons
+iOS 26 requires multi-layer icons for Liquid Glass rendering. Use Icon Composer in Xcode 26 to create layered icons from a single design — they render in light, dark, tinted, and the new "clear" appearance modes.
+
+## New in SwiftUI for iOS 26
+
+### Native WebView
+SwiftUI now has a built-in `WebView` for displaying HTML/CSS/JS content. Associate it with a `WebPage` (`@Observable` class) for full navigation control:
+
+```swift
+struct BrowserView: View {
+    @State private var page = WebPage()
+
+    var body: some View {
+        WebView(page)
+            .onAppear { page.url = URL(string: "https://example.com") }
+    }
+}
+```
+
+### Rich Text TextEditor
+`TextEditor` now supports `AttributedString` for rich text editing:
+
+```swift
+struct RichEditorView: View {
+    @State private var text = AttributedString()
+
+    var body: some View {
+        TextEditor(text: $text)
+    }
+}
+```
+
+### @Animatable Macro
+New macro that auto-synthesizes `Animatable` conformance — no more manual `animatableData` implementations:
+
+```swift
+@Animatable
+struct PulseModifier: ViewModifier {
+    var scale: CGFloat  // automatically animatable
+    // ...
+}
+```
 
 ## Navigation
 
@@ -210,6 +299,46 @@ private var contentSection: some View { ... }
 private var footerSection: some View { ... }
 ```
 
+### Why AnyView Kills Performance — Use @ViewBuilder Instead
+
+`AnyView` type-erases the view, which destroys SwiftUI's diffing optimization. SwiftUI's rendering engine compares old and new view trees to determine what changed — with concrete types it can do this efficiently. `AnyView` hides the concrete type, so SwiftUI can't compare the trees and falls back to tearing down and fully rebuilding the subtree on every state change.
+
+With `@ViewBuilder`, SwiftUI sees the concrete types through `_ConditionalContent` and can diff efficiently — it knows which branch changed and only updates that branch.
+
+```swift
+// BAD — AnyView destroys diffing, full rebuild every time
+func makeView(for item: Item) -> AnyView {
+    if item.isPremium {
+        return AnyView(PremiumItemView(item: item))
+    } else {
+        return AnyView(BasicItemView(item: item))
+    }
+}
+
+// GOOD — @ViewBuilder preserves concrete types via _ConditionalContent
+@ViewBuilder
+func makeView(for item: Item) -> some View {
+    if item.isPremium {
+        PremiumItemView(item: item)
+    } else {
+        BasicItemView(item: item)
+    }
+}
+
+// ALSO GOOD — Group achieves the same thing
+func makeView(for item: Item) -> some View {
+    Group {
+        if item.isPremium {
+            PremiumItemView(item: item)
+        } else {
+            BasicItemView(item: item)
+        }
+    }
+}
+```
+
+If you find `AnyView` in a codebase, it's almost always replaceable with `@ViewBuilder`, `Group`, or a restructured view hierarchy. The only legitimate use case was heterogeneous collections, and even that is better handled with an enum of view types.
+
 ### ViewModifier for Reusable Styling
 
 ```swift
@@ -362,6 +491,8 @@ struct OrderListView: View {
 }
 ```
 
+In iOS 26, partial-height sheets are automatically inset with a Liquid Glass background. At smaller heights the bottom edges pull in, nesting in the curved edges of the display.
+
 ### Confirmation Dialogs
 
 ```swift
@@ -370,6 +501,8 @@ struct OrderListView: View {
     Button("Cancel", role: .cancel) { }
 }
 ```
+
+In iOS 26, dialogs automatically morph out of the buttons that present them.
 
 ### Alerts
 
@@ -393,7 +526,7 @@ Button("Add to Cart") { addItem() }
 
 1. **Type-checker timeout from large view bodies** — this is the #1 SwiftUI build issue. Long chains of `.sheet()`, `.onChange()`, `.onReceive()` in a single body cause exponential type inference. The fix is always to extract subviews, computed properties, or ViewModifiers. If you see `unable to type-check this expression in reasonable time`, the view body is too large.
 
-2. **`AnyView` erasure** — kills SwiftUI's diffing performance. Use `@ViewBuilder`, `Group`, or concrete conditional views.
+2. **`AnyView` type erasure** — destroys SwiftUI's diffing. `AnyView` hides concrete types so SwiftUI can't compare old/new view trees and falls back to full teardown/rebuild. With `@ViewBuilder`, SwiftUI sees concrete types through `_ConditionalContent` and diffs efficiently. Replace every `AnyView` with `@ViewBuilder` or `Group`.
 
 3. **Business logic in view body** — views should only describe UI. Move logic to ViewModels.
 
@@ -404,3 +537,5 @@ Button("Add to Cart") { addItem() }
 6. **Ignoring `Identifiable`** — using `\.self` for `id` in `ForEach` with value types that aren't truly unique causes rendering bugs.
 
 7. **Giant `@Observable` objects** — if a ViewModel has 20+ properties, split it by feature area.
+
+8. **Over-applying `.glassEffect()`** — Liquid Glass is for the navigation/control layer, not content. Don't put glass on text, images, or content cards. Let system controls adopt it automatically and only use `.glassEffect()` on custom chrome.

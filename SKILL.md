@@ -1,11 +1,15 @@
 ---
 name: ios-swift-modern
-description: Modern iOS/Swift development standards and patterns for new and existing projects. Use this skill whenever the user asks to create, scaffold, refactor, or review an iOS app, Swift package, SwiftUI view, Xcode project, or any Apple platform code (macOS, watchOS, visionOS, tvOS). Also trigger when the user mentions Swift, SwiftUI, UIKit, Xcode, @Observable, async/await in a Swift context, MVVM for iOS, Core Data, SwiftData, or any Apple framework. Use this even for quick one-file Swift tasks to ensure modern conventions are followed. If the user says "make me an app" or "build an iOS app" or "new Xcode project" — use this skill.
+description: Modern iOS/Swift development standards and patterns for new and existing projects. Use this skill whenever the user asks to create, scaffold, refactor, or review an iOS app, Swift package, SwiftUI view, Xcode project, or any Apple platform code (macOS, watchOS, visionOS, tvOS). Also trigger when the user mentions Swift, SwiftUI, UIKit, Xcode, @Observable, async/await in a Swift context, MVVM for iOS, Core Data, SwiftData, Liquid Glass, or any Apple framework. Use this even for quick one-file Swift tasks to ensure modern conventions are followed. If the user says "make me an app" or "build an iOS app" or "new Xcode project" — use this skill.
 ---
 
 # Modern iOS/Swift Development Skill
 
-This skill ensures all iOS and Apple platform code follows current best practices as of Swift 6, iOS 17-18, and Xcode 16+. It covers architecture, concurrency, observation, data persistence, project structure, and common migration patterns from legacy approaches.
+This skill ensures all iOS and Apple platform code follows current best practices as of **Swift 6.3, iOS 26 (Liquid Glass), Xcode 26.4, and macOS Tahoe 26**. Apple moved to year-based versioning in 2025 — iOS went from 18 directly to 26, and all platforms now share the same version number.
+
+**Current versions (March 2026):** iOS 26.4, Xcode 26.4, Swift 6.3, macOS Tahoe 26.4
+
+**App Store requirement:** Starting April 2026, all submissions must be built with the iOS 26 SDK.
 
 Read the appropriate reference files in `references/` based on what the task requires. Don't read all of them upfront — only pull in what's relevant.
 
@@ -13,10 +17,11 @@ Read the appropriate reference files in `references/` based on what the task req
 
 Before writing any code, determine:
 
-1. **Deployment target** — This drives everything. If iOS 17+, use `@Observable`, `SwiftData`, modern APIs. If below iOS 17, use `ObservableObject`, Core Data, and note where you're making concessions.
-2. **UI framework** — SwiftUI (default for new projects) or UIKit (only if the project already uses it or has a specific requirement).
+1. **Deployment target** — This drives everything. If iOS 26 (new projects), use Liquid Glass design, `@Observable`, `SwiftData`, all modern APIs. If iOS 17+, use `@Observable` and `SwiftData` but skip Liquid Glass APIs. If below iOS 17, use `ObservableObject`, Core Data.
+2. **UI framework** — SwiftUI (default for new projects) or UIKit (only if the project already uses it or has a specific requirement). Note: SwiftUI in iOS 26 gained native `WebView` and rich text `TextEditor` support.
 3. **Architecture** — MVVM is the default. Don't introduce TCA, VIPER, or other patterns unless the user specifically requests them.
-4. **Concurrency model** — Swift Concurrency (async/await, actors) is the default. No GCD in new code.
+4. **Concurrency model** — Swift Concurrency (async/await, actors) is the default. No GCD in new code. Swift 6.2+ adds the `@concurrent` attribute for more granular concurrency control.
+5. **Design language** — iOS 26 introduces Liquid Glass. Apps rebuilt with Xcode 26 SDK automatically get Liquid Glass on standard controls. Custom adoption uses `.glassEffect()` and `GlassEffectContainer`.
 
 ## Project Structure
 
@@ -46,20 +51,9 @@ One primary type per file. File names match the type name.
 During refactoring, these are good practices — don't "fix" them:
 
 ### Debug-gated print() statements
-`print()` calls wrapped in `#if DEBUG` are intentional. In release builds, `print()` writes to stderr which degrades performance and can leak information. Production logging should use `os.Logger` (aka `Logger` from the `os` framework) with appropriate categories and levels. If a codebase already has this pattern, preserve it. For new code, follow the same convention:
+`print()` calls wrapped in `#if DEBUG` are intentional and should be preserved in existing codebases. In release builds, bare `print()` writes to stderr which degrades performance and can leak information. If a codebase already uses `#if DEBUG` print() alongside `os.Logger`, don't refactor the prints into Logger calls — they're serving as throwaway/verbose debug output that the developer intentionally excluded from structured logging.
 
-```swift
-#if DEBUG
-print("Loaded \(items.count) items")
-#endif
-
-// For production-visible logging, use os.Logger:
-private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "NetworkService")
-logger.info("Request completed in \(duration)s")
-logger.error("Failed to decode response: \(error)")
-```
-
-Don't strip `#if DEBUG` guards, don't replace debug prints with Logger (they serve different purposes), and don't add print() calls without the `#if DEBUG` gate.
+However, for **new code**, prefer `os.Logger` even for debug-level output (see the Logging section below). The `#if DEBUG` print() pattern is a valid legacy approach but Logger is strictly better for anything you'd want to keep long-term.
 
 ### Caseless enums as namespaces
 A `case`-less `enum` used to hold `static let` constants is the Swift-idiomatic namespace pattern. Unlike a `struct`, it can't be accidentally instantiated. Don't convert these to structs, don't add cases, and don't add `private init()` — the absence of cases already prevents instantiation.
@@ -128,25 +122,42 @@ enum UserDefaultsKey: String {
 Prefer `struct` over `class` unless reference semantics are explicitly needed (ViewModels are the main exception with `@Observable`).
 
 ### Logging
-Use `os.Logger` for production logging. Use `print()` only inside `#if DEBUG` blocks for development-only output.
+
+**`os.Logger` is the default for all new code** — both production and debug logging. It's superior to `#if DEBUG print()` in every way:
+
+1. **Privacy by default** — Logger auto-redacts dynamic content in release builds. You explicitly opt-in with `privacy: .public` for non-sensitive data. No risk of leaking user data.
+2. **Always available** — Unlike `#if DEBUG print()`, Logger messages are always captured but only visible with a debugger or Console.app attached. This means you can diagnose production issues on user devices without needing a debug build.
+3. **Structured categories** — Subsystem + category lets you filter logs in Console.app by specific area (e.g., show only network logs, or only storage logs), which is invaluable for debugging specific subsystems.
+4. **Log levels** — `.debug`, `.info`, `.error`, `.fault` let the system manage retention and visibility. Debug-level messages have minimal performance impact and are only persisted when logging is actively observed.
 
 ```swift
 import os
 
+// Define categories as static Logger instances for structured filtering
 extension Logger {
-    static let network = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Network")
-    static let auth = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Auth")
-    static let data = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Data")
+    private static let subsystem = Bundle.main.bundleIdentifier!
+
+    static let network = Logger(subsystem: subsystem, category: "Network")
+    static let auth = Logger(subsystem: subsystem, category: "Auth")
+    static let storage = Logger(subsystem: subsystem, category: "Storage")
+    static let cloudKit = Logger(subsystem: subsystem, category: "CloudKit")
+    static let memory = Logger(subsystem: subsystem, category: "Memory")
 }
 
-// Usage
-Logger.network.info("Request started: \(endpoint)")
-Logger.network.error("Request failed: \(error)")
+// Usage — note privacy controls on dynamic content
+Logger.network.debug("Request started: \(endpoint, privacy: .public)")
+Logger.network.info("Response: \(statusCode, privacy: .public) in \(duration)s")
+Logger.network.error("Failed: \(error.localizedDescription, privacy: .public)")
 
-#if DEBUG
-print("Debug-only verbose output: \(response)")
-#endif
+// Sensitive data is auto-redacted by default — no privacy annotation needed
+Logger.auth.info("Token refreshed for user \(userId)")  // userId is redacted in release
 ```
+
+**When `#if DEBUG print()` is still acceptable:**
+- Throwaway debug output you intend to remove before committing
+- Extremely verbose dump output (full JSON payloads, etc.) that would pollute structured logs
+
+**Never use bare `print()` without `#if DEBUG`** — it writes to stderr in release, degrades performance, and can leak information.
 
 ## Observation — @Observable vs ObservableObject
 
@@ -154,7 +165,7 @@ print("Debug-only verbose output: \(response)")
 
 The rule: iOS 17+ → `@Observable`. Below iOS 17 → `ObservableObject`.
 
-Quick summary for new iOS 17+ code:
+Quick summary for new iOS 17+/26 code:
 
 ```swift
 import Observation
@@ -191,6 +202,7 @@ Key rules:
 - `Task {}` to bridge sync → async (`.task` modifier, button actions)
 - `AsyncStream` / `AsyncSequence` to replace Combine publishers where practical
 - Enable strict concurrency checking in build settings
+- Swift 6.2+ introduces `@concurrent` for marking functions that should run concurrently off the caller's actor
 
 ```swift
 @Observable
@@ -219,16 +231,17 @@ final class OrderViewModel {
 
 ## SwiftUI Patterns
 
-→ **Read `references/swiftui-patterns.md` for navigation, state management, modifiers, and common patterns.**
+→ **Read `references/swiftui-patterns.md` for navigation, state management, Liquid Glass, modifiers, and common patterns.**
 
 Key conventions:
 - `NavigationStack` (never the deprecated `NavigationView`)
 - `.navigationDestination(for:)` for type-safe navigation
 - `.task` modifier for async work on appear (replaces `.onAppear` + `Task {}`)
 - `@Environment(\.dismiss)` to dismiss views
-- Keep view bodies under ~40 lines — extract subviews aggressively
+- Keep view bodies under ~40 lines — extract subviews aggressively (this is a compiler requirement, not just style)
 - `ViewModifier` for reusable styling
 - Prefer `.sensoryFeedback()` (iOS 17+) over UIKit haptics
+- **iOS 26:** Liquid Glass automatically applies to standard controls when built with Xcode 26 SDK. Use `.glassEffect()` for custom Liquid Glass surfaces.
 
 ## Data Persistence
 
@@ -289,7 +302,7 @@ actor NetworkService {
 - `Any` / `AnyObject` when a protocol or generic works
 - Singleton pattern for services → use dependency injection
 - `@UIApplicationDelegateAdaptor` unless you genuinely need UIKit lifecycle hooks
-- Bare `print()` outside of `#if DEBUG` — use `os.Logger` for production logging
+- Bare `print()` outside of `#if DEBUG` — use `os.Logger` instead
 
 ## Naming Conventions
 
