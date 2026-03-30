@@ -41,11 +41,11 @@ When you ask Claude Code to refactor, review, or modernize an existing iOS codeb
 ```bash
 # Project-level (one project)
 mkdir -p /path/to/your/project/.claude/skills
-ln -s /Users/dak/Projects/ios-swift-modern /path/to/your/project/.claude/skills/ios-swift-modern
+ln -s /Users/user/Projects/ios-swift-modern /path/to/your/project/.claude/skills/ios-swift-modern
 
 # User-level (all projects)
 mkdir -p ~/.claude/skills
-ln -s /Users/dak/Projects/ios-swift-modern ~/.claude/skills/ios-swift-modern
+ln -s /Users/user/Projects/ios-swift-modern ~/.claude/skills/ios-swift-modern
 ```
 
 ## Structure
